@@ -4,6 +4,10 @@ using JSON
 
 using HiGHS
 using Gurobi
+using Juniper
+using Ipopt
+using JuMP
+using Alpine
 
 """common.jl
 This file contains common option parsing functionality to help drive command
@@ -20,12 +24,31 @@ function get_optimizer(solver_name::String)
     name_to_optimizer = Dict(
         "gurobi" => Gurobi.Optimizer,
         "highs" => HiGHS.Optimizer,
+        "juniper" => Juniper.Optimizer,
+        "alpine" => Alpine.Optimizer
+    )
+    nlp = JuMP.optimizer_with_attributes(Ipopt.Optimizer,
+    "print_level" => 0,
+)
+
+    mip = JuMP.optimizer_with_attributes(HiGHS.Optimizer,
+        "output_flag" => false,   # HiGHS attribute
     )
     if !(solver_name in keys(name_to_optimizer))
         throw(ArgumentError(
             "Unsupported solver specified. Supported options are: gurobi, highs"
         ))
     end
+    if solver_name in ["juniper", "alpine"]
+        minlp_optimizer = JuMP.optimizer_with_attributes(
+            name_to_optimizer[solver_name],
+            "nl_solver" => nlp,
+            "mip_solver" => mip,
+        )
+        return minlp_optimizer
+    end
+        
+
     return name_to_optimizer[solver_name]
 end
 

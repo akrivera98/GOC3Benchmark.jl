@@ -1,6 +1,7 @@
 module GOC3Benchmark
 
 # Include these files in topological order of the dependency DAG
+using Debugger
 
 include("reserves.jl")
 

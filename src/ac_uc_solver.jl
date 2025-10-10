@@ -59,6 +59,17 @@ function run_ac_uc_solver(args::Dict)
         throw(Exception)
     end
 
+    # My Gurobi args
+    gap     = get(args, "gurobi_MIPGapTol", nothing)
+    feastol = get(args, "gurobi_FeasibilityTol", nothing)
+    tl      = get(args, "time_limit", nothing)
+
+    atts = Pair{String,Any}[]
+    if gap     !== nothing; push!(atts, "MIPGap"        => gap);     end
+    if feastol !== nothing; push!(atts, "FeasibilityTol"=> feastol); end
+    if tl      !== nothing; push!(atts, "TimeLimit"     => tl);      end
+    # optional: push!(atts, "NonConvex" => 2)
+
     # scheduler time limit setting
     scheduler_time_limit = get(args, "scheduler_time_limit", -1.0)
     # Note that time_limit in MyJulia1 is an int. Here we convert to float
@@ -188,6 +199,11 @@ function run_ac_uc_solver(args::Dict)
     timing_data["load_initial_data"] = time() - start_time
 
     if simultaneous_acuc
+        println("Running simultaneous ACUC")
+        t_total_start = time()
+
+        # ------------------ SETUP (model construction) ------------------
+        t_setup_start = time()
         if fix_ac_real_power
             throw(ArgumentError("simultaneous_acuc cannot be used with fix_ac_real_power"))
         end
@@ -201,8 +217,71 @@ function run_ac_uc_solver(args::Dict)
             input_data,
             include_reserves=include_reserves_in_acuc,
         )
+        minlp_optimizer = optimizer_with_attributes(minlp_optimizer, atts...)
+
         JuMP.set_optimizer(acuc_model, minlp_optimizer)
+
+        t_setup = time() - t_setup_start
+        timing_data["simultaneous_acuc_setup"] = t_setup
+
+        # ------------------ SOLVE ------------------
+        t_solve_wall_start = time()
         JuMP.optimize!(acuc_model)
+        t_solve_wall = time() - t_solve_wall_start
+        timing_data["simultaneous_acuc_solve_wall"] = t_solve_wall
+        
+        ts = JuMP.termination_status(acuc_model)
+        ps = JuMP.primal_status(acuc_model)
+
+        has_incumbent = ps in (MOI.FEASIBLE_POINT, MOI.NEARLY_FEASIBLE_POINT)
+        obj = has_incumbent ? JuMP.objective_value(acuc_model) : NaN
+
+        solve_data["feasible"] = has_incumbent
+        solve_data["objective_value"] = obj
+        solve_data["termination_status"] = ts
+
+        # If the solver provides it, also record solver-reported time
+        solve_time_attr = try
+            MOI.get(JuMP.backend(acuc_model), MOI.SolveTime())
+        catch
+            nothing
+        end
+        if solve_time_attr !== nothing
+            timing_data["simultaneous_acuc_solve_solver"] = solve_time_attr
+        end
+
+
+        # Best bound and a robust final gap
+        bound = try
+            get_optimizer_attribute(acuc_model, "ObjBound")
+        catch
+            NaN
+        end
+        rel_gap = (has_incumbent && isfinite(bound)) ? (obj - bound) / max(abs(obj), 1e-10) : NaN
+
+        # Max violations (match Gurobi log lines)
+        feastol = try
+            get_optimizer_attribute(acuc_model, "FeasibilityTol")
+        catch
+            NaN
+        end
+        max_constr_vio = try
+            get_optimizer_attribute(acuc_model, "ConstrVio")
+        catch
+            NaN
+        end
+        max_genconstr_vio = try
+            get_optimizer_attribute(acuc_model, "GenConstrVio")
+        catch
+            NaN
+        end
+        
+        solve_data["obj_bound"]               = bound
+        solve_data["rel_gap"]                 = rel_gap
+        solve_data["gurobi_feasibility_tol"]  = feastol
+        solve_data["gurobi_max_constr_vio"]   = max_constr_vio
+        solve_data["gurobi_max_genconstr_vio"]= max_genconstr_vio
+
 
         # We can extract scheduling data easily as this model uses the same
         # variable names as the full model
@@ -230,6 +309,7 @@ function run_ac_uc_solver(args::Dict)
                 ) for (key, devicedict) in mpacopf_solution
             )) for i in periods
         ]
+        timing_data["simultaneous_acuc_run"] = time() - t_total_start
     else
         time_mip_start = time()
 
@@ -566,6 +646,9 @@ function run_ac_uc_solver(args::Dict)
     #end
     ###
 
+    # ---------- TOTAL ----------
+    timing_data["simultaneous_acuc_total"] = time() - t_total_start
+
     time_solution_start = time()
 
     #
@@ -602,6 +685,7 @@ function run_ac_uc_solver(args::Dict)
     solve_data["solution"] = solfile_dict
     solve_data["timing"] = timing_data
 
+    println("Displaying timing")
     display(timing_data)
 
     # TODO: Populate "run_time" in solve_data
