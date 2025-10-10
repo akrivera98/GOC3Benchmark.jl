@@ -1,49 +1,37 @@
 #!/bin/bash
-#SBATCH --job-name=acuc_gap
-#SBATCH --output=logs/gap_%j.out
-#SBATCH --error=logs/gap_%j.err
+#SBATCH --job-name=acuc_gap_array_73bus
+#SBATCH --output=logs/gap_%A_%a.out
+#SBATCH --error=logs/gap_%A_%a.err
 #SBATCH --time=02:00:00
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=128G
+#SBATCH --mem=64G
 #SBATCH --partition=mit_normal
+#SBATCH --array=0-2   # 3 gaps -> indices 0,1,2
 
-module load julia/1.10
+module load julia/1.9
+# module load gurobi/12.0.3         # adjust to your site’s version
 
-CASE_FILE="test/data/C3S0N00003D1_scenario_003.json"
+# define your gaps as a bash array
+
+GAPS=(1e-6 1e-5 1e-4)
+GAP=${GAPS[$SLURM_ARRAY_TASK_ID]}
+
+CASE_FILE="data/S0/inputs/C3S0N00073D1_scenario_003.json"
 OUT_CSV="results/results_uc.csv"
 MODEL="C3E4N00073"
-SWITCHING=1
+SWITCHING=0
 TIME_LIMIT=1800
 RUNS=3
 PROJECT_FLAG="--project=."
 
 mkdir -p logs results
 
-# List of Gurobi MIPGap values
-for GAP in 1e-2 1e-3 1e-4 1e-6; do
-    echo "Submitting job for gap=${GAP}"
-    sbatch <<EOF
-#!/bin/bash
-#SBATCH --job-name=acuc_${GAP}
-#SBATCH --output=logs/gap_${GAP}_%j.out
-#SBATCH --error=logs/gap_${GAP}_%j.err
-#SBATCH --time=02:00:00
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=8G
-#SBATCH --partition=mit_normal
-
-module load julia/1.10
-
-echo "Running simultaneous AC-UC for GAP=${GAP}"
+echo "Running GAP=${GAP} (task ${SLURM_ARRAY_TASK_ID})"
 julia ${PROJECT_FLAG} analysis_scripts/analyze_runtimes.jl \
-    -c "${CASE_FILE}" \
-    -o "${OUT_CSV}" \
-    --gap "${GAP}" \
-    -r "${RUNS}" \
-    -t "${TIME_LIMIT}" \
-    -m "${MODEL}" \
-    -s "${SWITCHING}"
-
-echo "Done GAP=${GAP}"
-EOF
-done
+  -c "${CASE_FILE}" \
+  -o "${OUT_CSV}" \
+  --gap "${GAP}" \
+  -r "${RUNS}" \
+  -t "${TIME_LIMIT}" \
+  -m "${MODEL}" \
+  -s "${SWITCHING}"
