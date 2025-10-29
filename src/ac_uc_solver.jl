@@ -7,6 +7,7 @@ using JuMP
 #import MathOptInterface as MOI
 using HiGHS
 using Ipopt
+using Gurobi
 
 #include("scheduler.jl")
 # : schedule_power_copperplate
@@ -217,9 +218,17 @@ function run_ac_uc_solver(args::Dict)
             input_data,
             include_reserves=include_reserves_in_acuc,
         )
-        minlp_optimizer = optimizer_with_attributes(minlp_optimizer, atts...)
+        # minlp_optimizer = optimizer_with_attributes(minlp_optimizer, atts...)
 
-        JuMP.set_optimizer(acuc_model, minlp_optimizer)
+        # JuMP.set_optimizer(acuc_model, minlp_optimizer)
+        # JuMP.set_optimizer_attribute(acuc_model, "Threads", 1)
+        JuMP.set_optimizer(acuc_model, Gurobi.Optimizer)
+        for (att, val) in atts
+            JuMP.set_optimizer_attribute(acuc_model, att, val)
+        end
+
+        JuMP.set_optimizer_attribute(acuc_model, "Threads", 1)
+        # JuMP.set_optimizer_attribute(acuc_model, "Presolve", 0)
 
         t_setup = time() - t_setup_start
         timing_data["simultaneous_acuc_setup"] = t_setup
